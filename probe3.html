@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Probe v3</title>
+<style>
+body { font-family: monospace; background: #111; color: #0f0; padding: 8px; font-size: 11px; overflow-y: auto; }
+h2 { color: #0ff; margin: 4px 0 2px; font-size: 13px; }
+.hit { color: #f00; font-weight: bold; }
+.miss { color: #555; }
+.info { color: #ff0; }
+#log { white-space: pre-wrap; word-break: break-all; }
+button { background: #0f0; color: #000; border: none; padding: 8px 16px; margin: 4px; font-size: 14px; cursor: pointer; }
+</style>
+</head>
+<body>
+<h2>Probe v3 - File System + Bridge Deep Dive</h2>
+<div id="status" class="info">Tap buttons below</div>
+<div>
+<button onclick="tryOpenDir()">Open Directory Picker</button>
+<button onclick="tryOpenFile()">Open File Picker</button>
+<button onclick="trySaveFile()">Save File Picker</button>
+<button onclick="tryOPFS()">OPFS (Origin Private FS)</button>
+<button onclick="probeBridge()">Deep Bridge</button>
+<button onclick="trySSH()">Probe SSH:22</button>
+<button onclick="trySW()">Register ServiceWorker</button>
+</div>
+<div id="log"></div>
+
+<script>
+var L = document.getElementById('log');
+function log(cls, msg) {
+    var d = document.createElement('div');
+    d.className = cls;
+    d.textContent = msg;
+    L.appendChild(d);
+}
+
+async function tryOpenDir() {
+    log('info', '=== showDirectoryPicker ===');
+    try {
+        var dirHandle = await window.showDirectoryPicker({mode:'read'});
+        log('hit', 'GOT DIR: ' + dirHandle.name + ' kind=' + dirHandle.kind);
+        var count = 0;
+        for await (var entry of dirHandle.values()) {
+            log('hit', '  ' + entry.kind + ': ' + entry.name);
+            count++;
+            if (count > 50) { log('info', '  ...truncated'); break; }
+        }
+    } catch(e) { log('miss', 'Dir picker: ' + e.name + ': ' + e.message); }
+}
+
+async function tryOpenFile() {
+    log('info', '=== showOpenFilePicker ===');
+    try {
+        var handles = await window.showOpenFilePicker({multiple:false});
+        var fh = handles[0];
+        log('hit', 'GOT FILE: ' + fh.name + ' kind=' + fh.kind);
+        var file = await fh.getFile();
+        log('hit', '  size=' + file.size + ' type=' + file.type + ' lastModified=' + new Date(file.lastModified).toISOString());
+        if (file.size < 50000) {
+            var text = await file.text();
+            log('hit', '  CONTENT (first 2000): ' + text.substring(0, 2000));
+        } else {
+            var text = await file.slice(0, 2000).text();
+            log('hit', '  CONTENT (first 2000 of ' + file.size + '): ' + text);
+        }
+    } catch(e) { log('miss', 'File picker: ' + e.name + ': ' + e.message); }
+}
+
+async function trySaveFile() {
+    log('info', '=== showSaveFilePicker ===');
+    try {
+        var fh = await window.showSaveFilePicker({suggestedName:'test.sh',types:[{description:'Shell',accept:{'text/plain':['.sh']}}]});
+        log('hit', 'GOT SAVE HANDLE: ' + fh.name);
+        var writable = await fh.createWritable();
+        await writable.write('#!/system/bin/sh\necho "probe write test"\nid\n');
+        await writable.close();
+        log('hit', 'FILE WRITTEN: ' + fh.name);
+        var verify = await fh.getFile();
+        var text = await verify.text();
+        log('hit', 'VERIFIED CONTENT: ' + text);
+    } catch(e) { log('miss', 'Save picker: ' + e.name + ': ' + e.message); }
+}
+
+async function tryOPFS() {
+    log('info', '=== Origin Private File System ===');
+    try {
+        var root = await navigator.storage.getDirectory();
+        log('hit', 'OPFS root: ' + root.name + ' kind=' + root.kind);
+        var testFile = await root.getFileHandle('probe_test.txt', {create:true});
+        log('hit', 'Created file: ' + testFile.name);
+        var writable = await testFile.createWritable();
+        await writable.write('probe test data');
+        await writable.close();
+        log('hit', 'Written to OPFS');
+        var file = await testFile.getFile();
+        var text = await file.text();
+        log('hit', 'Read back: ' + text);
+        for await (var entry of root.values()) {
+            log('info', '  OPFS entry: ' + entry.kind + ': ' + entry.name);
+        }
+    } catch(e) { log('miss', 'OPFS: ' + e.name + ': ' + e.message); }
+}
+
+async function probeBridge() {
+    log('info', '=== android.webview Deep Dive ===');
+    var a = window.android;
+    if (!a) { log('miss', 'No window.android'); return; }
+
+    var wv = a.webview;
+    log('hit', 'android.webview typeof: ' + typeof wv);
+    log('hit', 'android.webview toString: ' + String(wv));
+    try { log('hit', 'android.webview JSON: ' + JSON.stringify(wv)); } catch(e) { log('info', 'JSON: ' + e.message); }
+
+    if (typeof wv === 'object' && wv !== null) {
+        try {
+            var own = Object.getOwnPropertyNames(wv);
+            log('hit', 'webview OwnProps (' + own.length + '): ' + own.join(', '));
+        } catch(e) {}
+        try {
+            var k = Object.keys(wv);
+            log('hit', 'webview keys (' + k.length + '): ' + k.join(', '));
+        } catch(e) {}
+        var allK = [];
+        try { for (var key in wv) { allK.push(key); } } catch(e) {}
+        log('hit', 'webview for..in (' + allK.length + '): ' + allK.join(', '));
+
+        try {
+            var proto = Object.getPrototypeOf(wv);
+            var d = 0;
+            while (proto && d < 5) {
+                var pk = Object.getOwnPropertyNames(proto);
+                log('hit', 'wv Proto[' + d + '] (' + pk.length + '): ' + pk.join(', '));
+                proto = Object.getPrototypeOf(proto);
+                d++;
+            }
+        } catch(e) {}
+
+        // Try calling webview as function
+        try { var r = wv(); log('hit', 'wv() returned: ' + String(r)); } catch(e) { log('info', 'wv() call: ' + e.message); }
+        // Try webview methods
+        var wvMethods = ['loadUrl','evaluateJavascript','getUrl','getTitle','canGoBack','goBack',
+            'canGoForward','goForward','reload','stopLoading','getSettings','addJavascriptInterface',
+            'removeJavascriptInterface','postUrl','loadData','loadDataWithBaseURL',
+            'getContentHeight','getScale','setWebViewClient','setWebChromeClient',
+            'getOriginalUrl','clearCache','clearHistory','destroy'];
+        for (var m of wvMethods) {
+            try {
+                var v = wv[m];
+                if (v !== undefined && v !== null) log('hit', '  wv.' + m + ' = ' + typeof v + ': ' + String(v).substring(0,100));
+            } catch(e) { log('hit', '  wv.' + m + ' ERROR: ' + e.message); }
+        }
+
+        // If webview is a string/value, try using it
+        if (typeof wv === 'string') {
+            log('hit', 'webview is string value: ' + wv);
+        } else if (typeof wv === 'boolean') {
+            log('hit', 'webview is boolean: ' + wv);
+        }
+    } else if (typeof wv === 'function') {
+        log('hit', 'webview is FUNCTION: ' + String(wv));
+        try { var r = wv(); log('hit', 'wv() = ' + String(r)); } catch(e) {}
+        try { var r = wv('test'); log('hit', 'wv(test) = ' + String(r)); } catch(e) {}
+    } else {
+        log('info', 'webview is primitive: ' + String(wv));
+    }
+
+    // Also check android directly for undiscovered props via Proxy trap simulation
+    log('info', '--- Brute force android property access ---');
+    var testProps = ['_webview','_context','_activity','mWebView','mContext','mActivity',
+        'nativePtr','mNativePtr','handle','mHandle','bridge','mBridge',
+        'settings','mSettings','client','mClient','chromeClient',
+        'contentProvider','packageManager','activityManager',
+        'alarmManager','notificationManager','wifiManager',
+        'telephonyManager','connectivityManager','audioManager',
+        'powerManager','windowManager','displayManager',
+        'cameraManager','sensorManager','locationManager',
+        'bluetoothManager','usbManager','nfcManager',
+        'downloadManager','appOps','devicePolicy',
+        'keyguardManager','inputMethodManager','accessibilityManager',
+        'URL','URI','path','dir','root','system','proc',
+        'config','env','properties','build','version',
+        'adb','debug','developer','shell','terminal',
+        'am','pm','cmd','dumpsys','getprop','setprop','su'];
+    for (var tp of testProps) {
+        try {
+            var v = a[tp];
+            if (v !== undefined && v !== null) {
+                log('hit', 'android.' + tp + ' = ' + typeof v + ': ' + String(v).substring(0,200));
+            }
+        } catch(e) { log('hit', 'android.' + tp + ' ERROR: ' + e.message); }
+    }
+}
+
+async function trySSH() {
+    log('info', '=== SSH Port 22 Probe ===');
+    // Try raw TCP via fetch
+    try {
+        var r = await fetch('http://127.0.0.1:22/', {mode:'no-cors'});
+        log('hit', 'HTTP to :22 status=' + r.status + ' type=' + r.type);
+    } catch(e) { log('miss', 'HTTP :22: ' + e.message.substring(0,80)); }
+    // WS
+    try {
+        var ws = new WebSocket('ws://127.0.0.1:22/');
+        ws.onopen = function() { log('hit', 'WS :22 OPEN'); };
+        ws.onmessage = function(e) { log('hit', 'WS :22 MSG: ' + String(e.data).substring(0,200)); };
+        ws.onerror = function() { log('miss', 'WS :22 error'); };
+        ws.onclose = function(e) { log('info', 'WS :22 close code=' + e.code + ' reason=' + e.reason); };
+    } catch(e) {}
+    // 9090
+    try {
+        var r2 = await fetch('http://127.0.0.1:9090/', {mode:'no-cors'});
+        log('hit', 'HTTP to :9090 status=' + r2.status + ' type=' + r2.type);
+    } catch(e) { log('miss', 'HTTP :9090: ' + e.message.substring(0,80)); }
+}
+
+async function trySW() {
+    log('info', '=== Service Worker ===');
+    try {
+        if (!navigator.serviceWorker) { log('miss', 'No SW support'); return; }
+        var blob = new Blob(['self.addEventListener("install",function(e){e.waitUntil(self.skipWaiting())});self.addEventListener("activate",function(e){e.waitUntil(clients.claim())});self.addEventListener("fetch",function(e){console.log("SW FETCH:",e.request.url)});'], {type:'application/javascript'});
+        var url = URL.createObjectURL(blob);
+        log('info', 'Attempting SW register with blob URL...');
+        var reg = await navigator.serviceWorker.register(url, {scope:'/'});
+        log('hit', 'SW REGISTERED! state=' + reg.active?.state + ' scope=' + reg.scope);
+    } catch(e) {
+        log('info', 'SW blob: ' + e.message);
+        // Try registering from the same origin
+        try {
+            var reg2 = await navigator.serviceWorker.register('/sw.js');
+            log('hit', 'SW from /sw.js: ' + reg2.scope);
+        } catch(e2) { log('miss', 'SW /sw.js: ' + e2.message); }
+    }
+    // Check existing registrations
+    try {
+        var regs = await navigator.serviceWorker.getRegistrations();
+        log('info', 'Existing SW registrations: ' + regs.length);
+        for (var r of regs) { log('info', '  scope=' + r.scope + ' active=' + (r.active?.state)); }
+    } catch(e) {}
+}
+
+// Auto-run bridge probe on load
+log('info', 'Tap buttons to test. Auto-probing bridge...');
+probeBridge();
+</script>
+</body>
+</html>
